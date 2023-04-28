@@ -71,11 +71,21 @@ static int sched_yield (void) {
     Sleep (0);
     return 0;
 }
+
+void ggml_pause(void) {
+    _mm_pause();
+}
+
 #else
 #include <pthread.h>
 #include <stdatomic.h>
 
 typedef void* thread_ret_t;
+
+void ggml_pause(void) {
+    __builtin_ia32_pause();
+}
+
 #endif
 
 // __FMA__ and __F16C__ are not defined in MSVC, however they are implied with AVX2/AVX512
@@ -11403,6 +11413,24 @@ struct ggml_compute_state {
     struct ggml_compute_state_shared * shared;
 };
 
+int busy_wait(struct ggml_compute_state* state, bool has_work) {
+    while (1) {
+        for (int i = 0; i < 1000; ++i) {
+            if (atomic_load(&state->shared->has_work) == has_work) {
+                return 1;
+            }
+            if (atomic_load(&state->shared->stop)) {
+                return 0;
+            }
+            ggml_pause();
+            ggml_lock_lock  (&state->shared->spin);
+            ggml_lock_unlock(&state->shared->spin);
+        }
+        sched_yield();
+    }
+    return 1;
+}
+
 static thread_ret_t ggml_graph_compute_thread(void * data) {
     struct ggml_compute_state * state = (struct ggml_compute_state *) data;
 
@@ -11412,24 +11440,16 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
         if (atomic_fetch_add(&state->shared->n_ready, 1) == n_threads - 1) {
             atomic_store(&state->shared->has_work, false);
         } else {
-            while (atomic_load(&state->shared->has_work)) {
-                if (atomic_load(&state->shared->stop)) {
-                    return 0;
-                }
-                ggml_lock_lock  (&state->shared->spin);
-                ggml_lock_unlock(&state->shared->spin);
+            if (busy_wait(state, false) == 0) {
+                return 0;
             }
         }
 
         atomic_fetch_sub(&state->shared->n_ready, 1);
 
         // wait for work
-        while (!atomic_load(&state->shared->has_work)) {
-            if (atomic_load(&state->shared->stop)) {
-                return 0;
-            }
-            ggml_lock_lock  (&state->shared->spin);
-            ggml_lock_unlock(&state->shared->spin);
+        if (busy_wait(state, true) == 0) {
+            return 0;
         }
 
         // check if we should stop
