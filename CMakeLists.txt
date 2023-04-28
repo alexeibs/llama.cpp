@@ -45,6 +45,7 @@ option(LLAMA_LTO                    "llama: enable link time optimization"      
 option(LLAMA_ALL_WARNINGS           "llama: enable all compiler warnings"                   ON)
 option(LLAMA_ALL_WARNINGS_3RD_PARTY "llama: enable all compiler warnings in 3rd party libs" OFF)
 option(LLAMA_GPROF                  "llama: enable gprof"                                   OFF)
+option(LLAMA_KEEP_FRAME_POINTER     "llama: enable -fno-omit-frame-pointer flag"            OFF)
 
 # sanitizers
 option(LLAMA_SANITIZE_THREAD        "llama: enable thread sanitizer"                        OFF)
@@ -96,6 +97,10 @@ if (NOT MSVC)
     if (LLAMA_SANITIZE_UNDEFINED)
         add_compile_options(-fsanitize=undefined)
         link_libraries(-fsanitize=undefined)
+    endif()
+
+    if (LLAMA_KEEP_FRAME_POINTER)
+        add_compile_options(-fno-omit-frame-pointer)
     endif()
 endif()
 
